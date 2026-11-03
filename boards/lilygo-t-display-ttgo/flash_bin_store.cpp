@@ -24,6 +24,37 @@ static bool endsWithBin(const String &name) {
     return upper.endsWith(".BIN");
 }
 
+// Walks every subfolder of binstore (not just its root) looking for .bin
+// files, since uploads can land inside a folder (e.g. the WebUI's own
+// "Firmware" folder it may create). Each match is labelled with its path
+// relative to binstore's root so files with the same name in different
+// folders are still distinguishable.
+static void scanBinsRecursive(const String &dirPath, std::vector<Option> &out, String &fileToUseLocal) {
+    File dir = LittleFS.open(dirPath);
+    if (!dir || !dir.isDirectory()) return;
+
+    File entry = dir.openNextFile();
+    while (entry) {
+        String fullPath = String(entry.name());
+        if (!fullPath.startsWith("/")) fullPath = "/" + fullPath;
+        bool isDir = entry.isDirectory();
+        entry.close();
+
+        if (isDir) {
+            scanBinsRecursive(fullPath, out, fileToUseLocal);
+        } else {
+            String nameOnly = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+            if (endsWithBin(nameOnly)) {
+                String label = fullPath.startsWith("/") ? fullPath.substring(1) : fullPath;
+                out.push_back(
+                    {label, [fullPath, &fileToUseLocal]() { fileToUseLocal = fullPath; }});
+            }
+        }
+        entry = dir.openNextFile();
+    }
+    dir.close();
+}
+
 String loopFlashBin(bool filePicker) {
     if (!ensureFlashBinFs()) {
         displayError("Flash storage not found or not formatted");
@@ -34,27 +65,7 @@ String loopFlashBin(bool filePicker) {
         std::vector<Option> binOptions;
         String fileToUseLocal = "";
 
-        File root = LittleFS.open("/");
-        if (!root || !root.isDirectory()) {
-            displayError("Fail open binstore");
-            return "";
-        }
-        File entry = root.openNextFile();
-        while (entry) {
-            if (!entry.isDirectory()) {
-                String fullPath = String(entry.name());
-                if (!fullPath.startsWith("/")) fullPath = "/" + fullPath;
-                String nameOnly = fullPath.substring(fullPath.lastIndexOf('/') + 1);
-                if (endsWithBin(nameOnly)) {
-                    binOptions.push_back({nameOnly, [fullPath, &fileToUseLocal]() {
-                                               fileToUseLocal = fullPath;
-                                           }});
-                }
-            }
-            entry.close();
-            entry = root.openNextFile();
-        }
-        root.close();
+        scanBinsRecursive("/", binOptions, fileToUseLocal);
         std::sort(binOptions.begin(), binOptions.end(), sortList);
 
         if (binOptions.empty()) {
