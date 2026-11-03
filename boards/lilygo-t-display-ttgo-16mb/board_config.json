@@ -1,0 +1,35 @@
+{
+    "name": "LilyGO T-Display TTGO (16MB LittleFS Bypass)",
+    "mcu": "esp32",
+    "flash_size": "16MB",
+    "filesystem": "littlefs",
+    "display": {
+        "driver": "ST7789",
+        "width": 135,
+        "height": 240,
+        "rotation": 1,
+        "pins": {
+            "mosi": 19,
+            "sclk": 18,
+            "cs": 5,
+            "dc": 16,
+            "rst": 23,
+            "bl": 4
+        }
+    },
+    "buttons": [
+        {
+            "name": "Btn1",
+            "pin": 0
+        },
+        {
+            "name": "Btn2",
+            "pin": 35
+        }
+    ],
+    "storage": {
+        "sd_bypass": true,
+        "target_fs": "littlefs",
+        "mount_point": "/littlefs"
+    }
+}
