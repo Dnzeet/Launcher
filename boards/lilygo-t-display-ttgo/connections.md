@@ -52,10 +52,17 @@ has no flash-storage equivalent built into the Launcher upstream, so this
 board adds one:
 
 - `support_files/custom_16Mb_ttgo.csv` reserves an extra partition,
-  `binstore` (LittleFS, 8MB @ offset `0x1A0000`), on top of the normal
-  `custom_16Mb.csv` layout (room for several ~2-3MB firmware images at
-  once). The ~6.4MB left over is still free for the Partition Manager to
-  carve up for installed apps as usual.
+  `binstore` (LittleFS, 4MB @ offset `0x1A0000`), on top of the normal
+  `custom_16Mb.csv` layout. This is a deliberate trade-off: a bigger
+  binstore means fewer/smaller apps can actually be installed at once,
+  since a full firmware install (app + its data partition) is typically
+  ~4MB itself. 4MB comfortably stages one firmware image at a time
+  (upload -> install -> delete -> upload the next) while leaving ~10.4MB
+  free for 2+ installed, switchable firmwares. The Partition Manager's
+  resize (<->) button in the WebUI lets `binstore` and any installed
+  app's data partition (e.g. a too-small default `spiffs`) be resized
+  against each other after the fact, without rebuilding -- no fixed
+  split is final.
 - `flash_bin_store.h`/`.cpp` (board-local, only compiled for this board)
   mounts that partition at `/binstore` and provides an on-screen file list
   mirroring `loopSD()` (pick a `.bin` -> Install/Delete), reusing the exact
