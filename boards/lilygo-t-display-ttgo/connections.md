@@ -52,9 +52,10 @@ has no flash-storage equivalent built into the Launcher upstream, so this
 board adds one:
 
 - `support_files/custom_16Mb_ttgo.csv` reserves an extra partition,
-  `binstore` (LittleFS, 4MB @ offset `0x1A0000`), on top of the normal
-  `custom_16Mb.csv` layout. The ~10MB left over is still free for the
-  Partition Manager to carve up for installed apps as usual.
+  `binstore` (LittleFS, 8MB @ offset `0x1A0000`), on top of the normal
+  `custom_16Mb.csv` layout (room for several ~2-3MB firmware images at
+  once). The ~6.4MB left over is still free for the Partition Manager to
+  carve up for installed apps as usual.
 - `flash_bin_store.h`/`.cpp` (board-local, only compiled for this board)
   mounts that partition at `/binstore` and provides an on-screen file list
   mirroring `loopSD()` (pick a `.bin` -> Install/Delete), reusing the exact
