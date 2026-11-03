@@ -18,6 +18,9 @@
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
 #include "ram_profile.h"
+#if defined(HAS_FLASH_BIN_STORE)
+#include "flash_bin_store.h"
+#endif
 #include "sd_functions.h"
 #include "settings.h"
 #include "utils.h"
@@ -844,8 +847,16 @@ bool beginUploadTarget(File &file, const String &filename, const String &folder,
         launcherConsolePrintf("File: %s/%s\n", destFolder.c_str(), effectiveFilename.c_str());
         String fullPath = destFolder + "/" + effectiveFilename;
         String dirPath = fullPath.substring(0, fullPath.lastIndexOf("/"));
+#if defined(HAS_FLASH_BIN_STORE)
+        // No SD slot on this board -- plain (non-OTA) WebUI uploads land on the
+        // internal "binstore" LittleFS partition instead. See flash_bin_store.h.
+        if (!ensureFlashBinFs()) return false;
+        if (dirPath.length() > 0) LittleFS.mkdir(dirPath);
+        file = LittleFS.open(fullPath, "w");
+#else
         if (dirPath.length() > 0) createDirRecursive(dirPath);
         file = SDM.open(fullPath, "w");
+#endif
         if (!file) return false;
         outPath = fullPath;
         return true;
@@ -870,7 +881,11 @@ bool finishUploadTarget(File &file, const String &path, size_t expected) {
     // The write path can report success while the directory entry never lands (card
     // hiccup, full volume, dropped SPI transaction). Re-stat the file so a lost upload
     // is reported instead of answering "OK" for something that is not on the card.
+#if defined(HAS_FLASH_BIN_STORE)
+    File stored = LittleFS.open(path, FILE_READ);
+#else
     File stored = SDM.open(path, FILE_READ);
+#endif
     if (!stored) return false;
     const size_t actual = stored.size();
     stored.close();

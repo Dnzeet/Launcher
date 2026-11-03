@@ -33,6 +33,11 @@ String loopSD(bool filePicker = false);
 
 void updateFromSD(const String &path);
 
+// Shared install logic behind updateFromSD: parses the already-open file (raw app binary or
+// multi-partition image) and flashes it. `file` just needs to be a valid, open fs::File --
+// it works the same regardless of which filesystem (SD, LittleFS, ...) it was opened from.
+void updateFromFile(File file, const String &path);
+
 bool performDATAUpdate(Stream &updateSource, size_t updateSize, const char *label);
 
 #endif

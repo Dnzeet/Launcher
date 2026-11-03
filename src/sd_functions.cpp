@@ -799,12 +799,15 @@ DONE:
 ** Description:   this function analyse the .bin and calls installFromSdDynamic
 ***************************************************************************************/
 void updateFromSD(const String &path) {
+    File file = SDM.open(path);
+    updateFromFile(file, path);
+}
+
+void updateFromFile(File file, const String &path) {
     uint8_t partitionEntry[LAUNCHER_PARTITION_ENTRY_SIZE];
     uint32_t app_size = 0;
     uint32_t app_offset = 0;
     std::vector<LauncherInstallDataPartition> dataPartitions;
-
-    File file = SDM.open(path);
 
     if (!file) goto Exit;
     if (!file.seek(0x8000)) goto Exit;
