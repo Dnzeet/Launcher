@@ -1,3 +1,4 @@
+#include "flash_bin_store.h"
 #include "hal/bright/bright.h"
 #include "hal/device.h"
 #include "hal/inputs/buttons.h"
@@ -38,7 +39,12 @@ void _setup_gpio() {
 ** Location:    main.cpp
 ** Description: second stage gpio setup, run after TFT and before SD card initialization
 ***************************************************************************************/
-void _post_setup_gpio() { hal_bright_attach(TFT_BL); }
+void _post_setup_gpio() {
+    hal_bright_attach(TFT_BL);
+    // Mount binstore now, at boot -- so it's already ready whether the WebUI
+    // Files tab or the on-device "BIN" menu is the first thing to use it.
+    ensureFlashBinFs();
+}
 
 /***************************************************************************************
 ** Function: _late_setup_gpio()

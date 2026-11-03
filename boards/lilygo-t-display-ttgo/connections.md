@@ -61,20 +61,28 @@ board adds one:
   same install logic as the SD path via the new shared `updateFromFile()`
   (split out of `updateFromSD()` in `src/sd_functions.cpp`/`.h` — a
   filesystem-agnostic version of the same function, used by every board,
-  behavior unchanged for everyone else).
+  behavior unchanged for everyone else). The mount happens once at boot
+  (`_post_setup_gpio()` in `interface.cpp`), so it's ready whether the
+  WebUI or the on-device menu touches it first.
 - The main menu gets a new **"BIN"** icon in place of "SD"
   (`src/main.cpp`, guarded by `#if defined(HAS_FLASH_BIN_STORE)`, so it
   only exists on this board).
 - To get a `.bin` onto the device in the first place (no SD card to copy it
-  to): the WebUI's plain file upload, which normally always targets the SD
-  card, is redirected to `/binstore` for this board
-  (`src/webInterface.cpp`, same build flag guard). So the flow is: connect
-  to the device's WebUI once over WiFi and upload the `.bin`, then install
-  it from the device screen any time after — no WiFi/SD needed for the
-  install step itself.
-- "OTA" (Online Installer) and plain "WUI" installs still work exactly as
-  before and are unaffected — "BIN" is specifically for sideloading a
-  `.bin` that isn't in the online catalog (e.g. a custom-built firmware).
+  to): the WebUI's whole "Files" file manager (list/upload/download/
+  delete/rename/mkdir) is redirected from the SD card to `/binstore` for
+  this board. `src/webInterface.cpp` defines a `WEBFS` macro
+  (`LittleFS` here, `SDM` on every other board) and every one of those
+  file-manager functions goes through it instead of calling `SDM`
+  directly — one macro, so there's no spot left that still silently
+  assumes SD. So the flow is: connect to the device's WebUI once over
+  WiFi, use "Files" to upload/browse/manage `.bin`s on `/binstore`, then
+  install one from the device screen any time after — no WiFi/SD needed
+  for the install step itself. The device's "backup to SD" feature
+  (`/bkp`) is untouched and stays SD-only (and therefore unavailable) on
+  this board — out of scope here, not needed for installing firmware.
+- "OTA" (Online Installer) still works exactly as before and is
+  unaffected — "BIN" is specifically for sideloading a `.bin` that isn't
+  in the online catalog (e.g. a custom-built firmware).
 
 This whole feature is additive and gated behind `HAS_FLASH_BIN_STORE`
 (only defined for this board), so it should have zero effect on any other
@@ -87,7 +95,7 @@ GPIO17 is unused by this board definition.
 ## Flash size
 
 16MB (WROVER variant), confirmed by the board owner —
-`support_files/custom_16Mb.csv`, `board_upload.flash_size = 16MB`,
+`support_files/custom_16Mb_ttgo.csv`, `board_upload.flash_size = 16MB`,
 `board_upload.maximum_size = 16777216`.
 
 ## Not yet verified on hardware
