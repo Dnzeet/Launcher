@@ -100,7 +100,10 @@ bool setupSdCard() {
 ***************************************************************************************/
 bool deleteFromSd(const String &path) {
     File dir = SDM.open(path);
-    if (!dir.isDirectory()) { return SDM.remove(path.c_str()); }
+    if (!dir.isDirectory()) {
+        dir.close();
+        return SDM.remove(path.c_str());
+    }
 
     dir.rewindDirectory();
     bool success = true;
