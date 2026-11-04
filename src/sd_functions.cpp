@@ -31,6 +31,20 @@ static inline void resumeSdInstallInput() {
 }
 
 bool setupSdCard() {
+#if defined(SD_VIA_LITTLEFS)
+    // This board has no SD slot: SDM is LittleFS (see globals.h's SDM override),
+    // so "mounting the SD card" just means mounting that partition. Every
+    // function below (loopSD, readFs, updateFromSD, deleteFromSd, renameFile,
+    // copyFile, pasteFile, createFolder...) already goes through SDM, so they
+    // all work unchanged against it -- no SD-specific SPI/pin setup applies here.
+    if (sdcardMounted) return true;
+    sdcardMounted = SDM.begin(true, "/sdcard", 10, "flashfs"); // formatOnFail: blank on first boot
+    launcherConsolePrintln(
+        sdcardMounted ? "Flash storage mounted (acting as SD)" : "Failed to mount flash storage"
+    );
+    return sdcardMounted;
+#endif
+
 #if defined(DISABLE_SDCARD_ICON)
     // Device doesn't have SDCArd, so it may make things faster!
     sdcardMounted = false;
@@ -799,15 +813,12 @@ DONE:
 ** Description:   this function analyse the .bin and calls installFromSdDynamic
 ***************************************************************************************/
 void updateFromSD(const String &path) {
-    File file = SDM.open(path);
-    updateFromFile(file, path);
-}
-
-void updateFromFile(File file, const String &path) {
     uint8_t partitionEntry[LAUNCHER_PARTITION_ENTRY_SIZE];
     uint32_t app_size = 0;
     uint32_t app_offset = 0;
     std::vector<LauncherInstallDataPartition> dataPartitions;
+
+    File file = SDM.open(path);
 
     if (!file) goto Exit;
     if (!file.seek(0x8000)) goto Exit;

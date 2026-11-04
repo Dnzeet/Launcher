@@ -18,17 +18,6 @@
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
 #include "ram_profile.h"
-#if defined(HAS_FLASH_BIN_STORE)
-#include "flash_bin_store.h"
-// Boards with no SD slot at all route the WebUI's general file manager
-// (list/upload/download/delete/rename/mkdir under "Files") to the internal
-// "binstore" LittleFS partition instead of the (nonexistent) SD card. SDM and
-// LittleFS share the same fs::FS-derived interface, so every call site below
-// just swaps which object it talks to -- see flash_bin_store.h.
-#define WEBFS LittleFS
-#else
-#define WEBFS SDM
-#endif
 #include "sd_functions.h"
 #include "settings.h"
 #include "utils.h"
@@ -543,7 +532,7 @@ String humanReadableSize(uint64_t bytes) {
 String listFiles(const String &folder) {
     launcherConsolePrintln("Listing files stored on SD");
 
-    File root = WEBFS.open(folder);
+    File root = SDM.open(folder);
     uploadFolder = folder;
 
     String returnText = "pa:" + folder + ":0\n";
@@ -563,7 +552,7 @@ String listFiles(const String &folder) {
         if (isDir) {
             line = "Fo:" + nameOnly + ":0\n";
         } else {
-            File fileForSize = WEBFS.open(fullPath);
+            File fileForSize = SDM.open(fullPath);
             if (fileForSize) {
                 line = "Fi:" + nameOnly + ":" + humanReadableSize(fileForSize.size()) + "\n";
                 fileForSize.close();
@@ -785,8 +774,8 @@ void createDirRecursive(String path) {
         if (endIndex == -1) endIndex = path.length();
 
         currentPath += path.substring(startIndex, endIndex);
-        if (currentPath.length() > 0 && !WEBFS.exists(currentPath)) {
-            WEBFS.mkdir(currentPath);
+        if (currentPath.length() > 0 && !SDM.exists(currentPath)) {
+            SDM.mkdir(currentPath);
             launcherConsolePrintf("Creating folder: %s\n", currentPath.c_str());
         }
 
@@ -855,11 +844,11 @@ bool beginUploadTarget(File &file, const String &filename, const String &folder,
         launcherConsolePrintf("File: %s/%s\n", destFolder.c_str(), effectiveFilename.c_str());
         String fullPath = destFolder + "/" + effectiveFilename;
         String dirPath = fullPath.substring(0, fullPath.lastIndexOf("/"));
-#if defined(HAS_FLASH_BIN_STORE)
-        if (!ensureFlashBinFs()) return false;
+#if defined(SD_VIA_LITTLEFS)
+        if (!setupSdCard()) return false;
 #endif
         if (dirPath.length() > 0) createDirRecursive(dirPath);
-        file = WEBFS.open(fullPath, "w");
+        file = SDM.open(fullPath, "w");
         if (!file) return false;
         outPath = fullPath;
         return true;
@@ -884,7 +873,7 @@ bool finishUploadTarget(File &file, const String &path, size_t expected) {
     // The write path can report success while the directory entry never lands (card
     // hiccup, full volume, dropped SPI transaction). Re-stat the file so a lost upload
     // is reported instead of answering "OK" for something that is not on the card.
-    File stored = WEBFS.open(path, FILE_READ);
+    File stored = SDM.open(path, FILE_READ);
     if (!stored) return false;
     const size_t actual = stored.size();
     stored.close();
@@ -1096,7 +1085,7 @@ bool streamMultipartUpload(httpd_req_t *req) {
 
     if (inFile) { // truncated body: never answer OK for a half-written file
         file.close();
-        if (!activePath.isEmpty()) WEBFS.remove(activePath);
+        if (!activePath.isEmpty()) SDM.remove(activePath);
         if (error.isEmpty()) error = "Upload truncated";
     }
 
@@ -1193,13 +1182,8 @@ esp_err_t renameHandler(httpd_req_t *req) {
     String fileName = params.get("fileName");
     String filePath = params.get("filePath");
     String filePath2 = filePath.substring(0, filePath.lastIndexOf('/') + 1) + fileName;
-#if defined(HAS_FLASH_BIN_STORE)
-    bool fsReady = ensureFlashBinFs();
-#else
-    bool fsReady = setupSdCard();
-#endif
-    if (!fsReady) sendText(req, "text/plain", "Fail starting storage.");
-    else if (WEBFS.rename(filePath, filePath2))
+    if (!setupSdCard()) sendText(req, "text/plain", "Fail starting SD Card.");
+    else if (SDM.rename(filePath, filePath2))
         sendText(req, "text/plain", filePath + " renamed to " + filePath2);
     else sendText(req, "text/plain", "Fail renaming file.");
     return ESP_OK;
@@ -1269,8 +1253,8 @@ esp_err_t rootHandler(httpd_req_t *req) {
 }
 
 esp_err_t systemInfoHandler(httpd_req_t *req) {
-    uint64_t SDTotalBytes = WEBFS.totalBytes();
-    uint64_t SDUsedBytes = WEBFS.usedBytes();
+    uint64_t SDTotalBytes = SDM.totalBytes();
+    uint64_t SDUsedBytes = SDM.usedBytes();
     uint64_t SDFreeBytes = SDTotalBytes - SDUsedBytes;
 
     JsonDocument doc;
@@ -1355,7 +1339,7 @@ esp_err_t listFilesHandler(httpd_req_t *req) {
 }
 
 void sendFileDownload(httpd_req_t *req, const String &fileName) {
-    File file = WEBFS.open(fileName);
+    File file = SDM.open(fileName);
     if (!file) {
         sendText(req, 404, "text/plain", "File not found");
         return;
@@ -1378,28 +1362,6 @@ void sendFileDownload(httpd_req_t *req, const String &fileName) {
     file.close();
 }
 
-// Same recursive-delete semantics as deleteFromSd() (src/sd_functions.cpp),
-// but against WEBFS -- so it also works against binstore on boards with no
-// SD card, without touching the SD-only version every other board uses.
-static bool deleteFromWebFs(const String &path) {
-    File entry = WEBFS.open(path);
-    if (!entry.isDirectory()) return WEBFS.remove(path.c_str());
-
-    entry.rewindDirectory();
-    bool success = true;
-    bool isDir;
-    String fullPath = entry.getNextFileName(&isDir);
-    while (fullPath != "") {
-        if (isDir) success &= deleteFromWebFs(fullPath);
-        else success &= WEBFS.remove(fullPath.c_str());
-        yield();
-        fullPath = entry.getNextFileName(&isDir);
-    }
-    entry.close();
-    success &= WEBFS.rmdir(path.c_str());
-    return success;
-}
-
 esp_err_t fileHandler(httpd_req_t *req) {
     if (!checkUserWebAuth(req)) return ESP_OK;
     String fileName = queryValue(req, "name");
@@ -1409,9 +1371,9 @@ esp_err_t fileHandler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    if (!WEBFS.exists(fileName)) {
+    if (!SDM.exists(fileName)) {
         if (fileAction == "create") {
-            if (!WEBFS.mkdir(fileName)) sendText(req, "text/plain", "FAIL creating folder: " + fileName);
+            if (!SDM.mkdir(fileName)) sendText(req, "text/plain", "FAIL creating folder: " + fileName);
             else sendText(req, "text/plain", "Created new folder: " + fileName);
         } else {
             sendText(req, 400, "text/plain", "ERROR: file does not exist");
@@ -1421,10 +1383,10 @@ esp_err_t fileHandler(httpd_req_t *req) {
 
     if (fileAction == "download") sendFileDownload(req, fileName);
     else if (fileAction == "delete") {
-        if (deleteFromWebFs(fileName)) sendText(req, "text/plain", "Deleted : " + fileName);
+        if (deleteFromSd(fileName)) sendText(req, "text/plain", "Deleted : " + fileName);
         else sendText(req, "text/plain", "FAIL delating: " + fileName);
     } else if (fileAction == "create") {
-        if (!WEBFS.mkdir(fileName)) sendText(req, "text/plain", "FAIL creating existing folder: " + fileName);
+        if (!SDM.mkdir(fileName)) sendText(req, "text/plain", "FAIL creating existing folder: " + fileName);
         else sendText(req, "text/plain", "Created new folder: " + fileName);
     } else {
         sendText(req, 400, "text/plain", "ERROR: invalid action param supplied");
@@ -1441,7 +1403,7 @@ esp_err_t editfileHandler(httpd_req_t *req) {
     }
 
     if (req->method == HTTP_GET) {
-        File file = WEBFS.open(fileName);
+        File file = SDM.open(fileName);
         if (!file) {
             sendText(req, 404, "text/plain", "Not found");
             return ESP_OK;
@@ -1466,7 +1428,7 @@ esp_err_t editfileHandler(httpd_req_t *req) {
             sendText(req, 400, "text/plain", "Too large");
             return ESP_OK;
         }
-        File file = WEBFS.open(fileName, "w");
+        File file = SDM.open(fileName, "w");
         if (!file) {
             sendText(req, "text/plain", "FAIL");
             return ESP_OK;

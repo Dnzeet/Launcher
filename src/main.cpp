@@ -15,9 +15,6 @@
 #include "powerSave.h"
 #include "ram_profile.h"
 #include "utils.h"
-#if defined(HAS_FLASH_BIN_STORE)
-#include "flash_bin_store.h"
-#endif
 #include <functional>
 #include <iostream>
 #include <string>
@@ -492,12 +489,6 @@ void loop() {
                                          tiny ? "Launch from SDCard" : "Launch from or mng SDCard",
                                          [=]() { loopSD(false); },
                                          sdcardMounted},
-#endif
-#if defined(HAS_FLASH_BIN_STORE)
-        {"BIN",
-                                         tiny ? "Install from flash" : "Install .bin from flash storage",
-                                         [=]() { loopFlashBin(false); },
-                                         true},
 #endif
 #ifndef DISABLE_OTA
         {"OTA", "Online Installer", [=]() { ota_function(); }},
