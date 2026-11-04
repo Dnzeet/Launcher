@@ -39,62 +39,48 @@ uses the shared weak `getBattery()`/`isCharging()` defaults. GPIO14 is
 driven HIGH at boot on the off chance this PCB revision gates the divider
 behind it (harmless no-op on revisions that don't).
 
-## SD card
+## SD card -> flash, via the project's own SD_VIA_LITTLEFS mechanism
 
-**This board has no SD card slot at all.** `DISABLE_SDCARD_ICON=1` is set
-and every SD pin is `-1` — no SD driver is compiled in, matching how
-`lilygo-t-watch-s3` and `seeedstudio-sensecap` (also SD-less) are set up.
+**This board has no SD card slot at all.** Rather than bolting on a
+separate, custom "flash file manager" next to the real SD one, this uses
+a mechanism the Launcher project already ships for exactly this situation
+(`src/sd_functions.cpp`, `src/webInterface.cpp`, `include/globals.h`):
 
-## On-device flash storage for .bin files ("BIN" menu / binstore)
+- `-DSDM=LittleFS` — `SDM` is the one object every file-manager and
+  install function in this codebase already goes through
+  (`loopSD`/`readFs`/`updateFromSD`/`deleteFromSd`/`renameFile`/
+  `copyFile`/`pasteFile`/`createFolder`, the WebUI's whole "Files" tab).
+  Normally it's `#define`d to the real `SD` object; this board defines
+  it to `LittleFS` instead before that default takes hold (see the
+  `#if !defined(SDM)` guard in `globals.h`).
+- `-DSD_VIA_LITTLEFS=1` — makes `setupSdCard()` just mount the
+  `flashfs` partition (`LittleFS.begin(true, "/sdcard", 10, "flashfs")`)
+  instead of touching real SD/SPI hardware.
+- `support_files/custom_16Mb_ttgo.csv` reserves that partition,
+  `flashfs` (LittleFS, 4MB @ offset `0x1A0000`) — the label has to be
+  exactly `flashfs`, it's what `setupSdCard()` looks for.
 
-The main menu's "SD" icon (browse files on-screen -> pick a `.bin` -> Install)
-has no flash-storage equivalent built into the Launcher upstream, so this
-board adds one:
+The upshot: the **same "SD" menu icon** every other board has — browse
+folders, rename, copy/paste, create folders, delete, pick a `.bin` to
+install — works completely unchanged here, just backed by internal flash
+instead of a card. No separate menu icon, no separate file-manager code,
+no separate install path to keep in sync with upstream. The WebUI's
+"Files" tab, upload, and OTA install all work the same way too, since
+they all go through `SDM`/`setupSdCard()` already.
 
-- `support_files/custom_16Mb_ttgo.csv` reserves an extra partition,
-  `binstore` (LittleFS, 4MB @ offset `0x1A0000`), on top of the normal
-  `custom_16Mb.csv` layout. This is a deliberate trade-off: a bigger
-  binstore means fewer/smaller apps can actually be installed at once,
-  since a full firmware install (app + its data partition) is typically
-  ~4MB itself. 4MB comfortably stages one firmware image at a time
-  (upload -> install -> delete -> upload the next) while leaving ~10.4MB
-  free for 2+ installed, switchable firmwares. The Partition Manager's
-  resize (<->) button in the WebUI lets `binstore` and any installed
-  app's data partition (e.g. a too-small default `spiffs`) be resized
-  against each other after the fact, without rebuilding -- no fixed
-  split is final.
-- `flash_bin_store.h`/`.cpp` (board-local, only compiled for this board)
-  mounts that partition at `/binstore` and provides an on-screen file list
-  mirroring `loopSD()` (pick a `.bin` -> Install/Delete), reusing the exact
-  same install logic as the SD path via the new shared `updateFromFile()`
-  (split out of `updateFromSD()` in `src/sd_functions.cpp`/`.h` — a
-  filesystem-agnostic version of the same function, used by every board,
-  behavior unchanged for everyone else). The mount happens once at boot
-  (`_post_setup_gpio()` in `interface.cpp`), so it's ready whether the
-  WebUI or the on-device menu touches it first.
-- The main menu gets a new **"BIN"** icon in place of "SD"
-  (`src/main.cpp`, guarded by `#if defined(HAS_FLASH_BIN_STORE)`, so it
-  only exists on this board).
-- To get a `.bin` onto the device in the first place (no SD card to copy it
-  to): the WebUI's whole "Files" file manager (list/upload/download/
-  delete/rename/mkdir) is redirected from the SD card to `/binstore` for
-  this board. `src/webInterface.cpp` defines a `WEBFS` macro
-  (`LittleFS` here, `SDM` on every other board) and every one of those
-  file-manager functions goes through it instead of calling `SDM`
-  directly — one macro, so there's no spot left that still silently
-  assumes SD. So the flow is: connect to the device's WebUI once over
-  WiFi, use "Files" to upload/browse/manage `.bin`s on `/binstore`, then
-  install one from the device screen any time after — no WiFi/SD needed
-  for the install step itself. The device's "backup to SD" feature
-  (`/bkp`) is untouched and stays SD-only (and therefore unavailable) on
-  this board — out of scope here, not needed for installing firmware.
-- "OTA" (Online Installer) still works exactly as before and is
-  unaffected — "BIN" is specifically for sideloading a `.bin` that isn't
-  in the online catalog (e.g. a custom-built firmware).
+4MB for `flashfs` is a deliberate trade-off against the ~10.4MB left
+free for the Partition Manager to actually install apps into: a bigger
+`flashfs` means less room for installed firmwares (each full install +
+its data partition is typically ~4MB), so 4MB is enough to stage one
+firmware image at a time (upload -> install -> delete -> upload the
+next) while leaving room for 2+ installed, switchable firmwares. The
+Partition Manager's resize (<->) button in the WebUI can resize
+`flashfs` and any installed app's data partition (e.g. a too-small
+default `spiffs`) against each other after the fact, without rebuilding.
 
-This whole feature is additive and gated behind `HAS_FLASH_BIN_STORE`
-(only defined for this board), so it should have zero effect on any other
-board's build or behavior.
+The device's "backup to SD" feature (`/bkp`, `src/backup_manager.cpp`)
+also goes entirely through `SDM`, so it works here too, backed by
+`flashfs` like everything else — no gap left on this board.
 
 ## Free pins
 
@@ -109,10 +95,16 @@ GPIO17 is unused by this board definition.
 ## Not yet verified on hardware
 
 Display offsets were wrong on the first hardware test (fixed above, see
-Display section). Still unconfirmed on real hardware: button feel
-(debounce/hold timing), whether the GPIO14 battery-enable guess is
-actually needed on this PCB revision, and the entire "BIN" / binstore
-flash-storage feature above (new partition mount, WebUI upload redirect,
-on-screen browser, install/delete) -- written against the existing SD
-code paths for consistency but not yet flashed and exercised end-to-end
-on real hardware.
+Display section). An earlier, custom flash-storage implementation (a
+separate "BIN" menu/partition, since replaced by SD_VIA_LITTLEFS above)
+ran into a real issue worth remembering: installing a firmware without
+enough free space left the running firmware's partition-table view stale
+until a manual reboot (install likely commits a partition-table change
+to reserve space before writing the binary, so a failure partway through
+still leaves that change applied). Always check the Partition Manager's
+free space before installing is the safe habit; this hasn't been
+specifically re-tested against the SD_VIA_LITTLEFS path since switching
+to it, since it is the same underlying install codepath as the SD icon.
+Also still unconfirmed on real hardware: button feel (debounce/hold
+timing), and whether the GPIO14 battery-enable guess is actually needed
+on this PCB revision.
